@@ -7,7 +7,7 @@ act(A, K) :-
  (worldSize(X,Y) ; worldSize((X,Y))),
  assert(worldSize((X,Y))),
  assert(visited([])),
- assert(safeSpots([])),
+ assert(safeSpots([(1,1)])),
  act(A, K).
 
 act(Action, K) :-
@@ -122,7 +122,14 @@ exists(A, B) :-
   !.
 
 my_retract(A, B, C) :-
-  delete(A, B, C).
+  my_delete(A, B, C).
+
+my_delete(A, [], []).
+my_delete(A, [H|T], Tp) :-
+  \+ \+ A = H, !,
+  my_delete(A, T, Tp).
+my_delete(A, [H|T], [H|Tp]) :-
+  my_delete(A, T, Tp).
 
 my_assert(A, B, C) :-
   C = [A | B].
@@ -140,29 +147,39 @@ retraceAction(A, Ok, K) :-
   )
 ; ( A = exit, Ok = K).
 
-doAction(A, Ok, K) :-
-  exists(goVia([A|T]), Ok),
-  my_retract(goVia(_), Ok, Kp),
-  ((T = [], !, K = Kp)
-  ; my_assert(goVia(T), Kp, K)).
-
-doAction(A, Ok, K) :-
-  glitter, !,
-  A = grab,
-  runAway(Ok, K).
-
 runAway(Ok, K) :-
   findPathTo((1,1), Ok, W),
   join(W, [exit], Wp),
   my_assert(goVia(Wp), Ok, K).
 
 doAction(A, Ok, Kn) :-
+  exists(goVia([A|T]), Ok),
+  my_retract(goVia(_), Ok, Kp),
+  ((T = [], !, K = Kp)
+  ; my_assert(goVia(T), Kp, K)),
+  updateIfSafe(K, Kn).
+
+doAction(A, Ok, K) :-
+  glitter, !,
+  A = grab,
+  runAway(Ok, K).
+
+doAction(A, Ok, Kn) :-
   ((bump, retraceAction(_, Ok, Kpp), updateBumpedPos(Kpp, Kp))
   ;(breeze, Kp = Ok)
   ;(stench, Kp = Ok)), !,
-  ( goToUnexploredNode(Kp, K), !
-  ; runAway(Kp, K), !),
+  findNewDirection(Kp, K),
   doAction(A, K, Kn).
+
+doAction(A, Ok, Kn) :-
+  updateIfSafe(Ok,Kp),
+  findNewDirection(Kp, K),
+  doAction(A, K, Kn).
+
+findNewDirection(Kp, K) :-
+  ( goToUnexploredNode(Kp, K), ! )
+  ; 
+  ( runAway(Kp, K), !).
 
 goToUnexploredNode(Kp, K) :-
   exists(safeSpots(SS), Kp),
@@ -172,10 +189,13 @@ goToUnexploredNode(Kp, K) :-
   findPathTo(X, Kp, P), !,
   my_assert(goVia(P), Kp, K).
 
-doAction(A, Ok, K) :-
-  updateSafeSpots(Ok, Kp),
-  goForward(A),
-  saveAction(A, Kp, K).
+updateIfSafe(Ok, K) :-
+  \+ breeze,
+  \+ stench,
+  !,
+  updateSafeSpots(Ok,K).
+
+updateIfSafe(K,K).
 
 goForward(moveForward).
 

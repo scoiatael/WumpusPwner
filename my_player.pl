@@ -150,7 +150,13 @@ retraceAction(A, Ok, K) :-
 runAway(Ok, K) :-
   findPathTo((1,1), Ok, W),
   join(W, [exit], Wp),
-  my_assert(goVia(Wp), Ok, K).
+  my_retract(goVia(_), Ok, Kp),
+  my_assert(goVia(Wp), Kp, K).
+
+doAction(A, Ok, K) :-
+  glitter, !,
+  A = grab,
+  runAway(Ok, K).
 
 doAction(A, Ok, Kn) :-
   exists(goVia([A|T]), Ok),
@@ -158,11 +164,6 @@ doAction(A, Ok, Kn) :-
   ((T = [], !, K = Kp)
   ; my_assert(goVia(T), Kp, K)),
   updateIfSafe(K, Kn).
-
-doAction(A, Ok, K) :-
-  glitter, !,
-  A = grab,
-  runAway(Ok, K).
 
 doAction(A, Ok, Kn) :-
   ((bump, retraceAction(_, Ok, Kpp), updateBumpedPos(Kpp, Kp))
@@ -187,7 +188,8 @@ goToUnexploredNode(Kp, K) :-
   member(X, SS),
   \+ member(X, V),
   findPathTo(X, Kp, P), !,
-  my_assert(goVia(P), Kp, K).
+  my_retract(goVia(_), Kp, Kpp),
+  my_assert(goVia(P), Kpp, K).
 
 updateIfSafe(Ok, K) :-
   \+ breeze,
@@ -211,11 +213,14 @@ updateSafeSpots(Ok, K) :-
   ; (L = [], Kp = Ok)),
   exists(myPos((P, _)), Kp),
   neighbours(P, Kp, N),
-  join(N,L, Lp),
+  joinSafe(N,L, Lp),
   my_assert(safeSpots(Lp), Kp, K).
 
 join([], K, K).
 join([H|T], L, [H|K]) :- join(T, L, K).
+
+joinSafe([], K, K).
+joinSafe([H|T], L, K) :- addIfNotMember(H, L, Kp), joinSafe(T, Kp, K).
 
 neighbours((X,Y), Ok, L) :-
   NY is Y + 1,
@@ -260,14 +265,17 @@ diffToAct((-1, 0), east,  [ turnLeft, turnLeft, moveForward ], west).
 diffToAct(( 0,-1), east,  [ turnRight, moveForward ], south).
 diffToAct(( 0, 1), east,  [ turnLeft, moveForward ], north).
 diffToAct(( 1, 0), east,  [ moveForward ], east).
+
 diffToAct((-1, 0), west,  [ moveForward ], west).
 diffToAct(( 0,-1), west,  [ turnLeft, moveForward ], south).
 diffToAct(( 0, 1), west,  [ turnRight, moveForward ], north).
 diffToAct(( 1, 0), west,  [ turnLeft, turnLeft, moveForward ], east).
-diffToAct((-1, 0), north, [ turnLeft, moveForward ], north).
+
+diffToAct((-1, 0), north, [ turnLeft, moveForward ], west).
 diffToAct(( 0,-1), north, [ turnLeft, turnLeft, moveForward ], south).
 diffToAct(( 0, 1), north, [ moveForward ], north).
 diffToAct(( 1, 0), north, [ turnRight, moveForward ], east).
+
 diffToAct((-1, 0), south, [ turnRight, moveForward ], west).
 diffToAct(( 0,-1), south, [ moveForward], south).
 diffToAct(( 0, 1), south, [ turnLeft, turnLeft, moveForward], north).

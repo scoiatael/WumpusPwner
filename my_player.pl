@@ -3,7 +3,7 @@ act(A, K) :-
  \+ gameStarted,
  assert(gameStarted),
  assert(myPos(((1,1), east))),
- assert(oldActions([])),
+ assert(wumpusIntel([])),
  (worldSize(X,Y) ; worldSize((X,Y))),
  assert(worldSize((X,Y))),
  assert(visited([])),
@@ -79,7 +79,7 @@ subVec((Ax, Ay), (Bx, By), (Cx, Cy)) :-
   Cx is Ax - Bx,
   Cy is Ay - By.
 
-valuableKnowledge([oldActions, goVia, myPos, safeSpots, worldSize, visited]).
+valuableKnowledge([wumpusIntel, goVia, myPos, safeSpots, worldSize, visited]).
 
 saveKnowledge(K) :-
   saveOldActions(X, [gameStarted]),
@@ -98,8 +98,8 @@ saveWorldSize(K, A) :-
   K = [worldSize(X) | A].
 
 saveOldActions(K, A) :-
-  oldActions(X), !,
-  K = [oldActions(X) | A].
+  wumpusIntel(X), !,
+  K = [wumpusIntel(X) | A].
 
 saveGoBack(K, A) :-
   goVia(X), !,
@@ -134,19 +134,6 @@ my_delete(A, [H|T], [H|Tp]) :-
 my_assert(A, B, C) :-
   C = [A | B].
 
-saveAction(A, Ok, K) :-
-  (
-    ( exists(oldActions(X), Ok), my_retract(oldActions(_), Ok, Kp))
-    ; X = [], Kp = Ok),
-  my_assert(oldActions([A|X]), Kp, K).
-
-retraceAction(A, Ok, K) :-
-  ( exists(oldActions([A|T]), Ok),
-    my_retract(oldActions(_), Ok, Kp),
-    my_assert(oldActions(T), Kp, K)
-  )
-; ( A = exit, Ok = K).
-
 runAway(Ok, K) :-
   findPathTo((1,1), Ok, W),
   join(W, [exit], Wp),
@@ -167,10 +154,23 @@ doAction(A, Ok, Kn) :-
 
 doAction(A, Ok, Kn) :-
   ((bump, retraceAction(_, Ok, Kpp), updateBumpedPos(Kpp, Kp))
-  ;(breeze, Kp = Ok)
-  ;(stench, Kp = Ok)), !,
+  ;(breeze, feltBreeze(Ok, Kp))
+  ;(stench, smelledStench(Ok, Kp))), !,
   findNewDirection(Kp, K),
   doAction(A, K, Kn).
+
+smelledStench(Ok, Kp) :-
+  exists(myPos((V,_)), Ok),
+  addWumpusIntel(stenchOn(V), Ok, Kp).
+
+feltBreeze(Ok, Kp) :-
+  exists(myPos((V,_)), Ok),
+  addWumpusIntel(breezeOn(V), Ok, Kp).
+
+addWumpusIntel(I, Ok, K) :- 
+  exists(wumpusIntel(X), Ok),
+  my_retract(wumpusIntel(_), Ok, Kp),
+  my_assert(wumpusIntel([I|X]), Kp, K).
 
 doAction(A, Ok, Kn) :-
   updateIfSafe(Ok,Kp),
@@ -180,6 +180,8 @@ doAction(A, Ok, Kn) :-
 findNewDirection(Kp, K) :-
   ( goToUnexploredNode(Kp, K), ! )
   ; 
+    %  ( killWumpus(Kp, K), ! )
+    %  ;
   ( runAway(Kp, K), !).
 
 goToUnexploredNode(Kp, K) :-
@@ -307,3 +309,82 @@ filterSafeN([H|T], SS, [H|Tp]) :-
   filterSafeN(T, SS, Tp).
 filterSafeN([_|T], SS, Tp) :-
   filterSafeN(T, SS, Tp).
+
+killWumpus(Ok, K):-
+  exists(wumpusIntel(X), Ok),
+  refactorWumpusInfo(X, (S, B)),
+  locateWumpus(S, Ok, Pos),
+  noWind(Pos, B, Ok),
+  calculateReward(Pos, Ok, Kp),
+  findPathTo(Pos, Kp, Path),
+  prepareShot(Path, Operation),
+  execute(Operation, Kp, K).
+
+refactorWumpusInfo([], ([],[])).
+refactorWumpusInfo([stenchOn(X) | T], ([X|S], B)) :-
+  refactorWumpusInfo(T, (S, B)).
+refactorWumpusInfo([breezeOn(X) | T], (S, [X|B])) :-
+  refactorWumpusInfo(T, (S, B)).
+
+locateWumpus(S, Kn, Pos) :-
+  locateByCrosshair(S, Kn, Pos)
+; locateByElimination(S, Kn, Pos).
+
+locateByCrosshair([P1, P2, P3 | _], _, Pos) :-
+  subVec(P1, P2, Diff1),
+  subVec(P1, P3, Diff2),
+  subVec(P2, P3, Diff3),
+  ( diff2ToWumpusPos(Diff1, P1, Pos) 
+  ; diff2ToWumpusPos(Diff2, P1, Pos)
+  ; diff2ToWumpusPos(Diff3, P2, Pos)).
+
+locateByCrosshair([P1, P2 | _], _, Pos) :-
+  subVec(P1, P2, Diff),
+  diff2ToWumpusPos(Diff, P1, Pos).
+
+diff2ToWumpusPos((-2, 0), (X,Y), (X1,Y1)):- X1 is X-1, Y1 = Y.
+diff2ToWumpusPos(( 2, 0), (X,Y), (X1,Y1)):- X1 is X+1, Y1 = Y.
+diff2ToWumpusPos(( 0, 2), (X,Y), (X1,Y1)):- X1 = X,    Y1 is Y+1.
+diff2ToWumpusPos(( 0,-2), (X,Y), (X1,Y1)):- X1 = X,    Y1 is Y+1.
+
+locateByElimination(S, Kn, Pos) :-
+  neighbours(S, Kn, N),
+  checkEachNeighbour(N, Kn, S, [Pos]).
+
+checkEachNeighbour([], _, _, []).
+checkEachNeighbour([N|T], K, S, [N|Tp]) :-
+  checkThisOne(N, K, S), !,
+  checkEachNeighbour(T, K, S, Tp).
+checkEachNeighbour([N|T], K, S, Tp) :-
+  checkEachNeighbour(T, K, S, Tp).
+
+checkThisOne(N, K, S) :-
+  (\+ isSafe(N,K), !)
+; (\+ noStenchAround(N, K, S)).
+
+noStenchAround(N, K, S) :-
+  neighbours(N, K, Neigh),
+  exists(visited(X), K),
+  filterSafeN(N, X, NX),
+  filterSafeN(NX, S, NS),
+  NS = [].
+
+isSafe(N,K) :-
+  exists(safeSpots(SS), K),
+  member(N, SS).
+
+noWind(P, B, K) :-
+  neighbours(P, K, N),
+  filterSafeN(N, B, NB),
+  NB = [].
+
+prepareShot([moveForward], [shoot]).
+prepareShot([H|T], [H|Tp]) :- prepareShot(T, Tp).
+
+calculateReward(Pos, Ok, K) :-
+  exists(safeSpots(SS), Ok),
+  my_retract(safeSpots(_), Ok, Kp),
+  my_assert(safeSpots([Pos|SS]), Kp, K).
+
+execute(Op, Ok, K) :-
+  my_assert(goVia(Op), Ok, K).

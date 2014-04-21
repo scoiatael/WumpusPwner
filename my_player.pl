@@ -13,7 +13,9 @@ act(A, K) :-
 act(Action, K) :-
   gameStarted, 
   saveKnowledge(OldKnowledge),
-  updateVisited(OldKnowledge, Knowledge),
+  updateVisited(OldKnowledge, Kk),
+  processPercepts(Kk, Ke),
+  updateIfSafe(Ke, Knowledge),
   doAction(Action, Knowledge, Kp),
   updateMyPos(Action, Kp, K).
 
@@ -79,7 +81,7 @@ subVec((Ax, Ay), (Bx, By), (Cx, Cy)) :-
   Cx is Ax - Bx,
   Cy is Ay - By.
 
-valuableKnowledge([wumpusIntel, goVia, myPos, safeSpots, worldSize, visited]).
+valuableKnowledge([wumpusIntel, goVia, myPos, safeSpots, worldSize, visited, wumpusDead]).
 
 saveKnowledge(K) :-
   saveOldActions(X, [gameStarted]),
@@ -87,7 +89,8 @@ saveKnowledge(K) :-
   saveSafeSpots(W,E),
   saveMyPos(R, W),
   saveVisited(T, R),
-  saveWorldSize(K, T).
+  saveWumpusDead(Y, T),
+  saveWorldSize(K, Y).
 
 saveVisited(K, A) :-
   visited(X), !,
@@ -100,6 +103,14 @@ saveWorldSize(K, A) :-
 saveOldActions(K, A) :-
   wumpusIntel(X), !,
   K = [wumpusIntel(X) | A].
+
+saveOldActions(K,K).
+
+saveWumpusDead(K, A) :-
+  wumpusDead(X), !,
+  K = [wumpusDead(X) | A].
+
+saveWumpusDead(K,K).
 
 saveGoBack(K, A) :-
   goVia(X), !,
@@ -124,7 +135,7 @@ exists(A, B) :-
 my_retract(A, B, C) :-
   my_delete(A, B, C).
 
-my_delete(A, [], []).
+my_delete(_, [], []).
 my_delete(A, [H|T], Tp) :-
   \+ \+ A = H, !,
   my_delete(A, T, Tp).
@@ -145,19 +156,23 @@ doAction(A, Ok, K) :-
   A = grab,
   runAway(Ok, K).
 
-doAction(A, Ok, Kn) :-
+doAction(A, Ok, K) :-
   exists(goVia([A|T]), Ok),
   my_retract(goVia(_), Ok, Kp),
   ((T = [], !, K = Kp)
-  ; my_assert(goVia(T), Kp, K)),
-  updateIfSafe(K, Kn).
+  ; my_assert(goVia(T), Kp, K)).
 
 doAction(A, Ok, Kn) :-
-  ((bump, retraceAction(_, Ok, Kpp), updateBumpedPos(Kpp, Kp))
-  ;(breeze, feltBreeze(Ok, Kp))
-  ;(stench, smelledStench(Ok, Kp))), !,
-  findNewDirection(Kp, K),
+  findNewDirection(Ok, K),
   doAction(A, K, Kn).
+
+processPercepts(Ok, Kn) :- 
+  ((breeze, !, feltBreeze(Ok, Kp))
+  ; Ok = Kp ),
+  ((stench, !, smelledStench(Kp, K))
+  ; K = Kp),
+  ((scream, !, my_assert(wumpusDead([]), K, Kn))
+  ; Kn = K).
 
 smelledStench(Ok, Kp) :-
   exists(myPos((V,_)), Ok),
@@ -168,14 +183,12 @@ feltBreeze(Ok, Kp) :-
   addWumpusIntel(breezeOn(V), Ok, Kp).
 
 addWumpusIntel(I, Ok, K) :- 
-  exists(wumpusIntel(X), Ok),
+  exists(wumpusIntel(X), Ok), !,
   my_retract(wumpusIntel(_), Ok, Kp),
-  my_assert(wumpusIntel([I|X]), Kp, K).
+  addIfNotMember(I, X, Xp),
+  my_assert(wumpusIntel(Xp), Kp, K).
 
-doAction(A, Ok, Kn) :-
-  updateIfSafe(Ok,Kp),
-  findNewDirection(Kp, K),
-  doAction(A, K, Kn).
+addWumpusIntel(_, K, K). 
 
 findNewDirection(Kp, K) :-
   ( goToUnexploredNode(Kp, K), ! )
@@ -195,7 +208,7 @@ goToUnexploredNode(Kp, K) :-
 
 updateIfSafe(Ok, K) :-
   \+ breeze,
-  \+ stench,
+  (\+ stench ; exists(wumpusDead(_), Ok)),
   !,
   updateSafeSpots(Ok,K).
 
@@ -238,12 +251,12 @@ neighbours((X,Y), Ok, L) :-
 addIfLE(A,B,C,D,E):-
   A =< B, !,
   E = [ C | D].
-addIfLE(A,B,C,D,D).
+addIfLE(_,_,_,D,D).
 
 addIfH(A,B,C,D,E):-
   A > B, !,
   E = [ C | D].
-addIfH(A,B,C,D,D).
+addIfH(_,_,_,D,D).
 
 reverseAction(moveForward, moveForward).
 reverseAction(turnLeft, turnRight).
@@ -256,7 +269,7 @@ findPathTo(PosB, Ok, Way) :-
   findWayTo(V, PosB, SS, W, Ok),
   wayToPath(W, Dir, Way).
 
-wayToPath([H], _, []).
+wayToPath([_], _, []).
 wayToPath([H1,H2|T], Dir, W) :- 
   subVec(H2, H1, Diff),
   diffToAct(Diff, Dir, Acts, Dirp),
@@ -286,9 +299,9 @@ diffToAct(( 1, 0), south, [ turnLeft, moveForward], east).
 findWayTo(PosA, PosB, SafeSpots, Way, Ok) :-
   bfs([[PosA]], PosB, SafeSpots, [], Way, Ok).
 
-bfs([[H|T]|Ws], H, _, _, Way, Ok) :- 
+bfs([[H|T]|_], H, _, _, Way, _) :- 
   reverse([H|T], Way).
-bfs([[H|T]| AltWays], PosB, SS, Visited, Way, Ok) :-
+bfs([[H|_]| AltWays], PosB, SS, Visited, Way, Ok) :-
   member(H, Visited), !,
   bfs(AltWays, PosB, SS, Visited, Way, Ok).
 bfs([[H|T]| AltWays], PosB, SS, Visited, Way, Ok) :-
@@ -310,17 +323,18 @@ filterSafeN([H|T], SS, [H|Tp]) :-
 filterSafeN([_|T], SS, Tp) :-
   filterSafeN(T, SS, Tp).
 
-killWumpus(Ok, K):-
+killWumpus(Ok, Kn):-
   exists(wumpusIntel(X), Ok),
   refactorWumpusInfo(X, (S, B)),
   locateWumpus(S, Ok, Pos),
   noWind(Pos, B, Ok),
   calculateReward(Pos, Ok, Kp),
-  findPathTo(Pos, Kp, Path),
+  findPathTo(Pos, Kp, Path), % seeks in new state, as it steps only on safe tiles
   prepareShot(Path, Operation),
-  execute(Operation, Kp, K).
+  execute(Operation, Kp, K),
+  my_retract(wumpusIntel(X), K, Kn).
 
-refactorWumpusInfo([], ([],[])).
+refactorWumpusInfo([], ([],[])):- !.
 refactorWumpusInfo([stenchOn(X) | T], ([X|S], B)) :-
   refactorWumpusInfo(T, (S, B)).
 refactorWumpusInfo([breezeOn(X) | T], (S, [X|B])) :-
@@ -334,26 +348,26 @@ locateByCrosshair([P1, P2, P3 | _], _, _, Pos) :-
   subVec(P1, P2, Diff1),
   subVec(P1, P3, Diff2),
   subVec(P2, P3, Diff3),
-  ( diff2ToWumpusPos(Diff1, P1, Pos, [], []) 
-  ; diff2ToWumpusPos(Diff2, P1, Pos, [], [])
-  ; diff2ToWumpusPos(Diff3, P2, Pos, [], [])).
+  ( diff2ToWumpusPos(Diff1, P2, Pos, [], []) 
+  ; diff2ToWumpusPos(Diff2, P3, Pos, [], [])
+  ; diff2ToWumpusPos(Diff3, P3, Pos, [], [])).
 
 locateByCrosshair([P1, P2], S, K, Pos) :-
   subVec(P1, P2, Diff),
-  diff2ToWumpusPos(Diff, P1, Pos, S, K).
+  diff2ToWumpusPos(Diff, P2, Pos, S, K).
 
 diff2ToWumpusPos((-2, 0), (X,Y), (X1,Y1), _, _):- X1 is X-1, Y1 = Y.
 diff2ToWumpusPos(( 2, 0), (X,Y), (X1,Y1), _, _):- X1 is X+1, Y1 = Y.
 diff2ToWumpusPos(( 0, 2), (X,Y), (X1,Y1), _, _):- X1 = X,    Y1 is Y+1.
-diff2ToWumpusPos(( 0,-2), (X,Y), (X1,Y1), _, _):- X1 = X,    Y1 is Y+1.
+diff2ToWumpusPos(( 0,-2), (X,Y), (X1,Y1), _, _):- X1 = X,    Y1 is Y-1.
   
-diff2ToWumpusPos((-1, 1), (X,Y), P, S, K):- X1 is X-1, Y1 = Y,
-  X2 = X, Y2 = Y+1, checkWhichOne((X1,Y1), (X2, Y2), S, K, P).
-diff2ToWumpusPos(( 1, 1), (X,Y), P, S, K):- X1 is X+1, Y1 = Y,
-  X2 = X, Y2 = Y+1, checkWhichOne((X1,Y1), (X2, Y2), S, K, P).
-diff2ToWumpusPos((-1,-1), (X,Y), P, S, K):- X1 = X,    Y1 is Y-1,
+diff2ToWumpusPos((-1, 1), (X,Y), P, S, K):- S = [_|_], X1 is X-1, Y1 = Y,
+  X2 = X, Y2 is Y+1, checkWhichOne((X1,Y1), (X2, Y2), S, K, P).
+diff2ToWumpusPos(( 1, 1), (X,Y), P, S, K):- S = [_|_], X1 is X+1, Y1 = Y,
+  X2 = X, Y2 is Y+1, checkWhichOne((X1,Y1), (X2, Y2), S, K, P).
+diff2ToWumpusPos((-1,-1), (X,Y), P, S, K):- S = [_|_], X1 = X,    Y1 is Y-1,
   X2 is X-1, Y2 = Y, checkWhichOne((X1,Y1), (X2, Y2), S, K, P).
-diff2ToWumpusPos(( 1,-1), (X,Y), P, S, K):- X1 = X,    Y1 is Y-1,
+diff2ToWumpusPos(( 1,-1), (X,Y), P, S, K):- S = [_|_], X1 = X,    Y1 is Y-1,
   X2 is X+1, Y2 = Y, checkWhichOne((X1,Y1), (X2, Y2), S, K, P).
 
 checkWhichOne(P1, P2, S, K, P) :-
@@ -373,9 +387,9 @@ locateByElimination([_ | T], St, Kn, Pos) :-
 
 checkEachNeighbour([], _, _, []).
 checkEachNeighbour([N|T], K, S, [N|Tp]) :-
-  checkThisOne(N, K, S), !,
+  checkThisOne(N, K, S), 
   checkEachNeighbour(T, K, S, Tp).
-checkEachNeighbour([N|T], K, S, Tp) :-
+checkEachNeighbour([_|T], K, S, Tp) :-
   checkEachNeighbour(T, K, S, Tp).
 
 checkThisOne(N, K, S) :-
@@ -385,8 +399,8 @@ checkThisOne(N, K, S) :-
 stenchAllAround(N, K, S) :-
   neighbours(N, K, Neigh),
   exists(visited(X), K),
-  filterSafeN(N, X, NX),
-  filterSafeN(NX, S, NS),
+  filterSafeN(Neigh, X, NX), % those neighbours he visited
+  filterSafeN(NX, S, NS), % those that smell
   NS = NX.
 
 isSafe(N,K) :-
@@ -395,8 +409,10 @@ isSafe(N,K) :-
 
 noWind(P, B, K) :-
   neighbours(P, K, N),
-  filterSafeN(N, B, NB),
-  NB = [].
+  exists(visited(X), K),
+  filterSafeN(N, X, NN), % those i have info about
+  filterSafeN(NN, B, NB),
+  \+ NB = NN. % at least one is not breezy --- there is no hole for sure
 
 prepareShot([moveForward], [shoot]).
 prepareShot([H|T], [H|Tp]) :- prepareShot(T, Tp).

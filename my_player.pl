@@ -180,8 +180,8 @@ doAction(A, Ok, Kn) :-
 findNewDirection(Kp, K) :-
   ( goToUnexploredNode(Kp, K), ! )
   ; 
-    %  ( killWumpus(Kp, K), ! )
-    %  ;
+  ( killWumpus(Kp, K), ! )
+  ;
   ( runAway(Kp, K), !).
 
 goToUnexploredNode(Kp, K) :-
@@ -327,29 +327,49 @@ refactorWumpusInfo([breezeOn(X) | T], (S, [X|B])) :-
   refactorWumpusInfo(T, (S, B)).
 
 locateWumpus(S, Kn, Pos) :-
-  locateByCrosshair(S, Kn, Pos)
-; locateByElimination(S, Kn, Pos).
+  locateByCrosshair(S, S, Kn, Pos)
+; locateByElimination(S, S, Kn, Pos).
 
-locateByCrosshair([P1, P2, P3 | _], _, Pos) :-
+locateByCrosshair([P1, P2, P3 | _], _, _, Pos) :-
   subVec(P1, P2, Diff1),
   subVec(P1, P3, Diff2),
   subVec(P2, P3, Diff3),
-  ( diff2ToWumpusPos(Diff1, P1, Pos) 
-  ; diff2ToWumpusPos(Diff2, P1, Pos)
-  ; diff2ToWumpusPos(Diff3, P2, Pos)).
+  ( diff2ToWumpusPos(Diff1, P1, Pos, [], []) 
+  ; diff2ToWumpusPos(Diff2, P1, Pos, [], [])
+  ; diff2ToWumpusPos(Diff3, P2, Pos, [], [])).
 
-locateByCrosshair([P1, P2 | _], _, Pos) :-
+locateByCrosshair([P1, P2], S, K, Pos) :-
   subVec(P1, P2, Diff),
-  diff2ToWumpusPos(Diff, P1, Pos).
+  diff2ToWumpusPos(Diff, P1, Pos, S, K).
 
-diff2ToWumpusPos((-2, 0), (X,Y), (X1,Y1)):- X1 is X-1, Y1 = Y.
-diff2ToWumpusPos(( 2, 0), (X,Y), (X1,Y1)):- X1 is X+1, Y1 = Y.
-diff2ToWumpusPos(( 0, 2), (X,Y), (X1,Y1)):- X1 = X,    Y1 is Y+1.
-diff2ToWumpusPos(( 0,-2), (X,Y), (X1,Y1)):- X1 = X,    Y1 is Y+1.
+diff2ToWumpusPos((-2, 0), (X,Y), (X1,Y1), _, _):- X1 is X-1, Y1 = Y.
+diff2ToWumpusPos(( 2, 0), (X,Y), (X1,Y1), _, _):- X1 is X+1, Y1 = Y.
+diff2ToWumpusPos(( 0, 2), (X,Y), (X1,Y1), _, _):- X1 = X,    Y1 is Y+1.
+diff2ToWumpusPos(( 0,-2), (X,Y), (X1,Y1), _, _):- X1 = X,    Y1 is Y+1.
+  
+diff2ToWumpusPos((-1, 1), (X,Y), P, S, K):- X1 is X-1, Y1 = Y,
+  X2 = X, Y2 = Y+1, checkWhichOne((X1,Y1), (X2, Y2), S, K, P).
+diff2ToWumpusPos(( 1, 1), (X,Y), P, S, K):- X1 is X+1, Y1 = Y,
+  X2 = X, Y2 = Y+1, checkWhichOne((X1,Y1), (X2, Y2), S, K, P).
+diff2ToWumpusPos((-1,-1), (X,Y), P, S, K):- X1 = X,    Y1 is Y-1,
+  X2 is X-1, Y2 = Y, checkWhichOne((X1,Y1), (X2, Y2), S, K, P).
+diff2ToWumpusPos(( 1,-1), (X,Y), P, S, K):- X1 = X,    Y1 is Y-1,
+  X2 is X+1, Y2 = Y, checkWhichOne((X1,Y1), (X2, Y2), S, K, P).
 
-locateByElimination(S, Kn, Pos) :-
+checkWhichOne(P1, P2, S, K, P) :-
+  ( checkThisOne(P1, K, S),
+    \+ checkThisOne(P2, K, S),
+    P = P1 )
+  ;
+  ( checkThisOne(P2, K, S),
+    \+ checkThisOne(P1, K, S),
+    P = P2 ).
+
+locateByElimination([S|_], St, Kn, Pos) :-
   neighbours(S, Kn, N),
-  checkEachNeighbour(N, Kn, S, [Pos]).
+  checkEachNeighbour(N, Kn, St, [Pos]).
+locateByElimination([_ | T], St, Kn, Pos) :-
+  locateByElimination(T, St, Kn, Pos).
 
 checkEachNeighbour([], _, _, []).
 checkEachNeighbour([N|T], K, S, [N|Tp]) :-
@@ -359,15 +379,15 @@ checkEachNeighbour([N|T], K, S, Tp) :-
   checkEachNeighbour(T, K, S, Tp).
 
 checkThisOne(N, K, S) :-
-  (\+ isSafe(N,K), !)
-; (\+ noStenchAround(N, K, S)).
+  \+ isSafe(N,K), 
+  stenchAllAround(N, K, S).
 
-noStenchAround(N, K, S) :-
+stenchAllAround(N, K, S) :-
   neighbours(N, K, Neigh),
   exists(visited(X), K),
   filterSafeN(N, X, NX),
   filterSafeN(NX, S, NS),
-  NS = [].
+  NS = NX.
 
 isSafe(N,K) :-
   exists(safeSpots(SS), K),
